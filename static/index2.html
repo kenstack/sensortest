@@ -8,17 +8,45 @@
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 2rem; }
     #status { margin-bottom: 1rem; }
     .reading { font-size: 1.6rem; margin: .5rem 0; }
-    button { font-size: 1rem; padding: .6rem 1rem; }
+    button { font-size: 1rem; padding: .6rem 1rem; margin: .5rem; }
+    #camera-container { margin-top: 2rem; }
+    #video { 
+      width: 100%; 
+      max-width: 400px; 
+      border: 2px solid #ccc; 
+      border-radius: 8px;
+      display: none;
+    }
+    #canvas { display: none; }
+    #camera-status { 
+      font-size: 0.9rem; 
+      color: #666; 
+      margin-top: 0.5rem; 
+    }
+    .controls { margin: 1rem 0; }
   </style>
 </head>
 <body>
   <h1>iPhone Sensor Test</h1>
-  <div id="status">Tap “Enable sensors” on iPhone Safari.</div>
-  <button id="btn">Enable sensors</button>
+  <div id="status">Tap "Enable sensors" on iPhone Safari.</div>
+  
+  <div class="controls">
+    <button id="btn">Enable sensors</button>
+    <button id="camera-btn">Start Camera</button>
+    <button id="stop-camera-btn" style="display: none;">Stop Camera</button>
+  </div>
+  
   <div class="reading">Pitch: <span id="pitch">—</span>°</div>
   <div class="reading">Roll: <span id="roll">—</span>°</div>
   <div class="reading">Raw β (beta): <span id="beta">—</span>°</div>
   <div class="reading">Raw γ (gamma): <span id="gamma">—</span>°</div>
+
+  <div id="camera-container">
+    <h2>Live Camera Feed</h2>
+    <video id="video" autoplay playsinline></video>
+    <canvas id="canvas"></canvas>
+    <div id="camera-status">Camera not started</div>
+  </div>
 
   <script>
     const pitchEl = document.getElementById('pitch');
@@ -26,6 +54,18 @@
     const betaEl  = document.getElementById('beta');
     const gammaEl = document.getElementById('gamma');
     const statusEl= document.getElementById('status');
+    
+    // Camera elements
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const cameraStatus = document.getElementById('camera-status');
+    const cameraBtn = document.getElementById('camera-btn');
+    const stopCameraBtn = document.getElementById('stop-camera-btn');
+    
+    // Camera state
+    let stream = null;
+    let uploadInterval = null;
+    let frameCount = 0;
 
     // Simple low-pass filter for accel
     let ax=0, ay=0, az=0, alpha=0.1;
@@ -72,11 +112,106 @@
         }
         startListeners();
       } catch (err) {
-        statusEl.textContent = 'Permission error: ' + err.message + '. In Settings > Safari, enable “Motion & Orientation Access,” then reload over HTTPS.';
+        statusEl.textContent = 'Permission error: ' + err.message + '. In Settings > Safari, enable "Motion & Orientation Access," then reload over HTTPS.';
       }
     }
 
+    async function startCamera() {
+      try {
+        // Request camera access with rear camera preference
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { 
+            facingMode: 'environment', // Use rear camera
+            width: { ideal: 640 },
+            height: { ideal: 480 }
+          }
+        });
+        
+        video.srcObject = stream;
+        video.style.display = 'block';
+        
+        // Setup canvas for image capture
+        canvas.width = 640;
+        canvas.height = 480;
+        
+        cameraStatus.textContent = 'Camera active - uploading 2 fps';
+        cameraBtn.style.display = 'none';
+        stopCameraBtn.style.display = 'inline-block';
+        
+        // Start uploading frames every 500ms (2 fps)
+        uploadInterval = setInterval(captureAndUpload, 500);
+        
+      } catch (err) {
+        cameraStatus.textContent = 'Camera error: ' + err.message;
+        console.error('Camera access error:', err);
+      }
+    }
+
+    function stopCamera() {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+      }
+      
+      if (uploadInterval) {
+        clearInterval(uploadInterval);
+        uploadInterval = null;
+      }
+      
+      video.style.display = 'none';
+      cameraStatus.textContent = 'Camera stopped';
+      cameraBtn.style.display = 'inline-block';
+      stopCameraBtn.style.display = 'none';
+      frameCount = 0;
+    }
+
+    function captureAndUpload() {
+      if (!video.videoWidth || !video.videoHeight) return;
+      
+      // Draw current video frame to canvas
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      
+      // Convert to blob and upload
+      canvas.toBlob(async (blob) => {
+        try {
+          frameCount++;
+          
+          // Create form data
+          const formData = new FormData();
+          formData.append('image', blob, `frame_${frameCount}_${Date.now()}.jpg`);
+          formData.append('timestamp', Date.now().toString());
+          formData.append('frame_number', frameCount.toString());
+          
+          // Add sensor data if available
+          if (pitchEl.textContent !== '—') {
+            formData.append('pitch', pitchEl.textContent);
+            formData.append('roll', rollEl.textContent);
+          }
+          
+          // Upload to server
+          const response = await fetch('/upload_frame', {
+            method: 'POST',
+            body: formData
+          });
+          
+          if (response.ok) {
+            cameraStatus.textContent = `Camera active - frame ${frameCount} uploaded`;
+          } else {
+            cameraStatus.textContent = `Upload error: ${response.status}`;
+          }
+          
+        } catch (err) {
+          cameraStatus.textContent = 'Upload failed: ' + err.message;
+          console.error('Upload error:', err);
+        }
+      }, 'image/jpeg', 0.8);
+    }
+
+    // Event listeners
     document.getElementById('btn').addEventListener('click', enableSensors);
+    cameraBtn.addEventListener('click', startCamera);
+    stopCameraBtn.addEventListener('click', stopCamera);
   </script>
 </body>
 </html>
