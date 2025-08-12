@@ -14,5 +14,5 @@ def health():
 
 @app.get("/")
 def root():
-    idx = Path("static/index.html")
+    idx = Path("static/index2.html")
     return FileResponse(idx) if idx.exists() else {"msg": "Hello from FastAPI"}
