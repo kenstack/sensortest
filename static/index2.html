@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sensor Test</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 2rem; }
+    #status { margin-bottom: 1rem; }
+    .reading { font-size: 1.6rem; margin: .5rem 0; }
+    button { font-size: 1rem; padding: .6rem 1rem; }
+  </style>
+</head>
+<body>
+  <h1>iPhone Sensor Test</h1>
+  <div id="status">Tap “Enable sensors” on iPhone Safari.</div>
+  <button id="btn">Enable sensors</button>
+  <div class="reading">Pitch: <span id="pitch">—</span>°</div>
+  <div class="reading">Roll: <span id="roll">—</span>°</div>
+  <div class="reading">Raw β (beta): <span id="beta">—</span>°</div>
+  <div class="reading">Raw γ (gamma): <span id="gamma">—</span>°</div>
+
+  <script>
+    const pitchEl = document.getElementById('pitch');
+    const rollEl  = document.getElementById('roll');
+    const betaEl  = document.getElementById('beta');
+    const gammaEl = document.getElementById('gamma');
+    const statusEl= document.getElementById('status');
+
+    // Simple low-pass filter for accel
+    let ax=0, ay=0, az=0, alpha=0.1;
+
+    function startListeners() {
+      // Preferred: compute pitch/roll from accelerationIncludingGravity (more stable)
+      window.addEventListener('devicemotion', (e) => {
+        if (!e.accelerationIncludingGravity) return;
+        const g = e.accelerationIncludingGravity;
+        ax = alpha*g.x + (1-alpha)*ax;
+        ay = alpha*g.y + (1-alpha)*ay;
+        az = alpha*g.z + (1-alpha)*az;
+
+        // Pitch/roll (radians)
+        const pitch = Math.atan2(-ax, Math.hypot(ay, az));
+        const roll  = Math.atan2( ay, az);
+
+        pitchEl.textContent = (pitch * 180/Math.PI).toFixed(1);
+        rollEl.textContent  = (roll  * 180/Math.PI).toFixed(1);
+      });
+
+      // Also show raw orientation (beta/gamma) for reference
+      window.addEventListener('deviceorientation', (e) => {
+        if (e.beta != null) betaEl.textContent  = e.beta.toFixed(1);
+        if (e.gamma!= null) gammaEl.textContent = e.gamma.toFixed(1);
+      });
+
+      statusEl.textContent = 'Sensors active.';
+    }
+
+    async function enableSensors() {
+      try {
+        // iOS requires user gesture + permission calls
+        const needsPermDM = typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function';
+        const needsPermDO = typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function';
+
+        if (needsPermDM) {
+          const res = await DeviceMotionEvent.requestPermission();
+          if (res !== 'granted') throw new Error('DeviceMotion denied');
+        }
+        if (needsPermDO) {
+          const res2 = await DeviceOrientationEvent.requestPermission();
+          if (res2 !== 'granted') throw new Error('DeviceOrientation denied');
+        }
+        startListeners();
+      } catch (err) {
+        statusEl.textContent = 'Permission error: ' + err.message + '. In Settings > Safari, enable “Motion & Orientation Access,” then reload over HTTPS.';
+      }
+    }
+
+    document.getElementById('btn').addEventListener('click', enableSensors);
+  </script>
+</body>
+</html>
