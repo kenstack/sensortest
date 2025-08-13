@@ -24,6 +24,22 @@
       margin-top: 0.5rem; 
     }
     .controls { margin: 1rem 0; }
+    .bbox {
+      position: absolute;
+      border: 2px solid #28a745;
+      pointer-events: none;
+      box-shadow: 0 0 4px #28a745;
+    }
+    #video-wrapper {
+      position: relative;
+      display: inline-block;
+    }
+    #overlay {
+      position: absolute;
+      left: 0;
+      top: 0;
+      pointer-events: none;
+    }
   </style>
 </head>
 <body>
@@ -44,12 +60,17 @@
 
   <div id="camera-container">
     <h2>Live Camera Feed</h2>
-    <video id="video" autoplay playsinline></video>
+    <div id="video-wrapper">
+      <video id="video" autoplay playsinline></video>
+      <canvas id="overlay"></canvas>
+    </div>
     <canvas id="canvas"></canvas>
     <div id="camera-status">Camera not started</div>
     <div id="detection-details" style="font-size: 0.8rem; color: #666; margin-top: 0.5rem;"></div>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
   <script>
     const pitchEl = document.getElementById('pitch');
     const rollEl  = document.getElementById('roll');
@@ -60,6 +81,7 @@
     // Camera elements
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
+    const overlay = document.getElementById('overlay');
     const cameraStatus = document.getElementById('camera-status');
     const cameraBtn = document.getElementById('camera-btn');
     const stopCameraBtn = document.getElementById('stop-camera-btn');
@@ -75,6 +97,11 @@
 
     // Simple low-pass filter for accel
     let ax=0, ay=0, az=0, alpha=0.1;
+
+    // TensorFlow.js detector
+    let detectorModel = null;
+    let detectorReady = false;
+    let lastDetections = [];
 
     function startListeners() {
       // Preferred: compute pitch/roll from accelerationIncludingGravity (more stable)
@@ -122,6 +149,73 @@
       }
     }
 
+    async function loadDetector() {
+      cameraStatus.textContent = 'Loading detector...';
+      try {
+        detectorModel = await cocoSsd.load({ base: 'lite_mobilenet_v2' }); // lightweight
+        detectorReady = true;
+        cameraStatus.textContent = 'Detector loaded. Start camera.';
+      } catch (e) {
+        console.error('Detector load failed', e);
+        cameraStatus.textContent = 'Detector load failed (continuing without)';
+      }
+    }
+    loadDetector();
+
+    async function runDetection() {
+      if (!detectorReady || video.readyState !== 4) return;
+      // Run every 4th frame to reduce load
+      if (frameCount % 4 !== 0) return;
+      try {
+        const preds = await detectorModel.detect(video);
+        // Filter for 'sports ball'
+        lastDetections = preds
+          .filter(p => p.class === 'sports ball' && p.score >= 0.55)
+          .map(p => ({
+            class: p.class,
+            confidence: p.score,
+            bbox: p.bbox  // [x, y, width, height]
+          }));
+        drawDetections();
+        updateDetectionUIFromClient();
+      } catch (e) {
+        console.warn('Detection error', e);
+      }
+    }
+
+    function drawDetections() {
+      overlay.width = video.videoWidth || 640;
+      overlay.height = video.videoHeight || 480;
+      const ctx = overlay.getContext('2d');
+      ctx.clearRect(0, 0, overlay.width, overlay.height);
+      lastDetections.forEach(det => {
+        const [x, y, w, h] = det.bbox;
+        ctx.strokeStyle = '#28a745';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x, y, w, h);
+        ctx.fillStyle = 'rgba(40,167,69,0.2)';
+        ctx.fillRect(x, y, w, h);
+        ctx.fillStyle = '#fff';
+        ctx.font = '12px sans-serif';
+        ctx.fillText(`${(det.confidence*100).toFixed(0)}%`, x + 4, y + 14);
+      });
+    }
+
+    function updateDetectionUIFromClient() {
+      if (lastDetections.length > 0) {
+        golfBallStatus.textContent = `YES (${lastDetections.length})`;
+        golfBallStatus.style.color = '#28a745';
+        detectionDetails.innerHTML = lastDetections.map((d, i) => {
+          const diameterApprox = Math.min(d.bbox[2], d.bbox[3]);
+          return `Ball ${i+1}: ~${diameterApprox.toFixed(1)}px dia, conf ${(d.confidence*100).toFixed(1)}% (client)`;
+        }).join('<br>');
+      } else {
+        golfBallStatus.textContent = 'NO';
+        golfBallStatus.style.color = '#dc3545';
+        detectionDetails.textContent = 'No golf balls detected (client)';
+      }
+    }
+
     async function startCamera() {
       try {
         // Request camera access with rear camera preference
@@ -135,10 +229,13 @@
         
         video.srcObject = stream;
         video.style.display = 'block';
+        overlay.style.display = 'block';
         
         // Setup canvas for image capture
         canvas.width = 640;
         canvas.height = 480;
+        overlay.width = 640;
+        overlay.height = 480;
         
         cameraStatus.textContent = 'Camera active - uploading 2 fps';
         cameraBtn.style.display = 'none';
@@ -177,7 +274,10 @@
       // Draw current video frame to canvas
       const ctx = canvas.getContext('2d');
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      
+
+      // Run client-side detection (non-blocking heavy operations minimized)
+      runDetection();
+
       // Convert to blob and upload
       canvas.toBlob(async (blob) => {
         try {
@@ -195,6 +295,11 @@
             formData.append('roll', rollEl.textContent);
           }
           
+          // Attach client detections summary
+          if (lastDetections.length) {
+            formData.append('client_detections', JSON.stringify(lastDetections));
+          }
+
           // Upload to server
           const response = await fetch('/upload_frame', {
             method: 'POST',
@@ -207,33 +312,15 @@
             // Update camera status
             cameraStatus.textContent = `Camera active - frame ${frameCount} uploaded`;
             
-            // Update golf ball detection status
+            // Optionally reconcile server detections (currently empty)
             if (result.golf_balls && result.golf_balls.length > 0) {
-              golfBallStatus.textContent = `YES (${result.golf_balls.length})`;
-              golfBallStatus.style.color = '#28a745'; // Green
-              
-              // Show detection details
-              const details = result.golf_balls.map((ball, i) => 
-                `Ball ${i+1}: ${ball.diameter_px.toFixed(1)}px dia, conf: ${ball.confidence.toFixed(2)} (${ball.method})`
-              ).join('<br>');
-              detectionDetails.innerHTML = details;
-              
-            } else {
-              golfBallStatus.textContent = 'NO';
-              golfBallStatus.style.color = '#dc3545'; // Red
-              detectionDetails.innerHTML = 'No golf balls detected in frame';
+              // Could merge or display separately; leaving client result prioritized
             }
-            
           } else {
             cameraStatus.textContent = `Upload error: ${response.status}`;
-            golfBallStatus.textContent = 'ERROR';
-            golfBallStatus.style.color = '#ffc107'; // Yellow
           }
-          
         } catch (err) {
           cameraStatus.textContent = 'Upload failed: ' + err.message;
-          golfBallStatus.textContent = 'ERROR';
-          golfBallStatus.style.color = '#ffc107'; // Yellow
           console.error('Upload error:', err);
         }
       }, 'image/jpeg', 0.8);
