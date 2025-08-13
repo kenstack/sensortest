@@ -1,10 +1,17 @@
 fastapi
 uvicorn
 python-multipart
-opencv-python
+
+# YOLOv7 (torch hub) dependencies
+torch
+torchvision
+
+# Core scientific stack
 numpy
 scipy
 matplotlib
-pillow
-pathlib
+Pillow
+
+# Optional: keep if you plan further OpenCV processing
+opencv-python
 
