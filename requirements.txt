@@ -2,12 +2,12 @@ fastapi
 uvicorn
 python-multipart
 
-# YOLOv7 (torch hub) dependencies
-torch
-torchvision
-
-# Core scientific stack
+# Image / numeric stack
+opencv-python
 numpy
+scipy
+matplotlib
+Pillow
 scipy
 matplotlib
 Pillow
