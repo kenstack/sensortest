@@ -2,16 +2,12 @@ fastapi
 uvicorn
 python-multipart
 
-# Image / numeric stack
-opencv-python
-numpy
-scipy
-matplotlib
-Pillow
-scipy
-matplotlib
-Pillow
+# Optional (uncomment if you add image / CV processing later)
+# opencv-python
+# numpy
+# Pillow
+# scipy
+# matplotlib
 
-# Optional: keep if you plan further OpenCV processing
-opencv-python
+
 
