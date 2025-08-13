@@ -40,12 +40,14 @@
   <div class="reading">Roll: <span id="roll">—</span>°</div>
   <div class="reading">Raw β (beta): <span id="beta">—</span>°</div>
   <div class="reading">Raw γ (gamma): <span id="gamma">—</span>°</div>
+  <div class="reading">Golf Ball Detected: <span id="golf-ball-status">—</span></div>
 
   <div id="camera-container">
     <h2>Live Camera Feed</h2>
     <video id="video" autoplay playsinline></video>
     <canvas id="canvas"></canvas>
     <div id="camera-status">Camera not started</div>
+    <div id="detection-details" style="font-size: 0.8rem; color: #666; margin-top: 0.5rem;"></div>
   </div>
 
   <script>
@@ -61,6 +63,10 @@
     const cameraStatus = document.getElementById('camera-status');
     const cameraBtn = document.getElementById('camera-btn');
     const stopCameraBtn = document.getElementById('stop-camera-btn');
+    
+    // Golf ball detection elements
+    const golfBallStatus = document.getElementById('golf-ball-status');
+    const detectionDetails = document.getElementById('detection-details');
     
     // Camera state
     let stream = null;
@@ -196,13 +202,38 @@
           });
           
           if (response.ok) {
+            const result = await response.json();
+            
+            // Update camera status
             cameraStatus.textContent = `Camera active - frame ${frameCount} uploaded`;
+            
+            // Update golf ball detection status
+            if (result.golf_balls && result.golf_balls.length > 0) {
+              golfBallStatus.textContent = `YES (${result.golf_balls.length})`;
+              golfBallStatus.style.color = '#28a745'; // Green
+              
+              // Show detection details
+              const details = result.golf_balls.map((ball, i) => 
+                `Ball ${i+1}: ${ball.diameter_px.toFixed(1)}px dia, conf: ${ball.confidence.toFixed(2)} (${ball.method})`
+              ).join('<br>');
+              detectionDetails.innerHTML = details;
+              
+            } else {
+              golfBallStatus.textContent = 'NO';
+              golfBallStatus.style.color = '#dc3545'; // Red
+              detectionDetails.innerHTML = 'No golf balls detected in frame';
+            }
+            
           } else {
             cameraStatus.textContent = `Upload error: ${response.status}`;
+            golfBallStatus.textContent = 'ERROR';
+            golfBallStatus.style.color = '#ffc107'; // Yellow
           }
           
         } catch (err) {
           cameraStatus.textContent = 'Upload failed: ' + err.message;
+          golfBallStatus.textContent = 'ERROR';
+          golfBallStatus.style.color = '#ffc107'; // Yellow
           console.error('Upload error:', err);
         }
       }, 'image/jpeg', 0.8);
